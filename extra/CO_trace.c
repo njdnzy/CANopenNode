@@ -22,10 +22,13 @@
  * limitations under the License.
  */
 
-
 #include "extra/CO_trace.h"
+
+#if (CO_CONFIG_TRACE) & CO_CONFIG_TRACE_ENABLE
+
 #include <stdio.h>
-#ifndef CO_OWN_INTTYPES
+#include <string.h>
+#if !((CO_CONFIG_TRACE) & CO_CONFIG_TRACE_OWN_INTTYPES)
 #include <inttypes.h> /* for PRIu32("u" or "lu") and PRId32("d" or "ld") */
 #endif
 
@@ -47,8 +50,10 @@ static uint32_t printPointCsvUnsigned(char *s, uint32_t size, uint32_t timeStamp
 }
 static uint32_t printPointBinary(char *s, uint32_t size, uint32_t timeStamp, int32_t value) {
     if(size < 8) return 0;
-    CO_memcpySwap4(s, &timeStamp);
-    CO_memcpySwap4(s+4, &value);
+    uint32_t timeStampSw = CO_SWAP_32(timeStamp);
+    int32_t valueSw = CO_SWAP_32(value);
+    memcpy(s, &timeStampSw, sizeof(timeStampSw));
+    memcpy(s+4, &valueSw, sizeof(valueSw));
     return 8;
 }
 static uint32_t printPointSvgStart(char *s, uint32_t size, uint32_t timeStamp, int32_t value) {
@@ -498,3 +503,5 @@ void CO_trace_process(CO_trace_t *trace, uint32_t timestamp) {
         trace->lastTimeStamp = timestamp;
     }
 }
+
+#endif /* (CO_CONFIG_TRACE) & CO_CONFIG_TRACE_ENABLE */

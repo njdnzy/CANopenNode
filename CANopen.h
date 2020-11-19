@@ -28,6 +28,24 @@
 #ifndef CANopen_H
 #define CANopen_H
 
+#include "301/CO_driver.h"
+#include "301/CO_SDOserver.h"
+#include "301/CO_SDOclient.h"
+#include "301/CO_Emergency.h"
+#include "301/CO_NMT_Heartbeat.h"
+#include "301/CO_TIME.h"
+#include "301/CO_SYNC.h"
+#include "301/CO_PDO.h"
+#include "301/CO_HBconsumer.h"
+#include "303/CO_LEDs.h"
+#include "304/CO_GFC.h"
+#include "304/CO_SRDO.h"
+#include "305/CO_LSSslave.h"
+#include "305/CO_LSSmaster.h"
+#include "309/CO_gateway_ascii.h"
+#include "extra/CO_trace.h"
+#include "CO_OD.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -141,16 +159,6 @@ extern "C" {
  * @{
  */
 
-    #include "301/CO_driver.h"
-    #include "301/CO_SDOserver.h"
-    #include "301/CO_Emergency.h"
-    #include "301/CO_NMT_Heartbeat.h"
-    #include "301/CO_TIME.h"
-    #include "301/CO_PDO.h"
-    #include "301/CO_HBconsumer.h"
-    #include "CO_OD.h"
-
-
 #ifdef CO_DOXYGEN
 /**
  * @defgroup CO_NO_OBJ CANopen configuration
@@ -247,35 +255,6 @@ extern "C" {
 #endif /* CO_DOXYGEN */
 
 
-#if CO_NO_SYNC == 1 || defined CO_DOXYGEN
-    #include "301/CO_SYNC.h"
-#endif
-#if CO_NO_SDO_CLIENT != 0 || defined CO_DOXYGEN
-    #include "301/CO_SDOclient.h"
-#endif
-#if CO_NO_GFC != 0 || defined CO_DOXYGEN
-    #include "304/CO_GFC.h"
-#endif
-#if CO_NO_SRDO != 0 || defined CO_DOXYGEN
-    #include "304/CO_SRDO.h"
-#endif
-#if CO_NO_LSS_SLAVE != 0 || defined CO_DOXYGEN
-    #include "305/CO_LSSslave.h"
-#endif
-#if ((CO_CONFIG_LEDS) & CO_CONFIG_LEDS_ENABLE) || defined CO_DOXYGEN
-    #include "303/CO_LEDs.h"
-#endif
-#if CO_NO_LSS_MASTER != 0 || defined CO_DOXYGEN
-    #include "305/CO_LSSmaster.h"
-#endif
-#if ((CO_CONFIG_GTW) & CO_CONFIG_GTW_ASCII) || defined CO_DOXYGEN
-    #include "309/CO_gateway_ascii.h"
-#endif
-#if CO_NO_TRACE != 0 || defined CO_DOXYGEN
-    #include "extra/CO_trace.h"
-#endif
-
-
 /**
  * CANopen object with pointers to all CANopenNode objects.
  */
@@ -289,7 +268,9 @@ typedef struct {
 #if CO_NO_SYNC == 1 || defined CO_DOXYGEN
     CO_SYNC_t *SYNC;                 /**< SYNC object */
 #endif
+#if CO_NO_TIME == 1 || defined CO_DOXYGEN
     CO_TIME_t *TIME;                 /**< TIME object */
+#endif
     CO_RPDO_t *RPDO[CO_NO_RPDO];     /**< RPDO objects */
     CO_TPDO_t *TPDO[CO_NO_TPDO];     /**< TPDO objects */
     CO_HBconsumer_t *HBcons;         /**< Heartbeat consumer object*/
@@ -492,7 +473,7 @@ void CO_process_SRDO(CO_t *co,
                      uint32_t *timerNext_us);
 #endif /* CO_NO_SRDO != 0 */
 
-/** @} */
+/** @} */ /* CO_CANopen */
 
 #ifdef __cplusplus
 }

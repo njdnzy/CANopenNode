@@ -25,6 +25,8 @@
 
 #include "304/CO_GFC.h"
 
+#if (CO_CONFIG_GFC) & CO_CONFIG_GFC_ENABLE
+
 #if (CO_CONFIG_GFC) & CO_CONFIG_GFC_CONSUMER
 
 static void CO_GFC_receive(void *object, void *msg)
@@ -67,7 +69,6 @@ CO_ReturnError_t CO_GFC_init(CO_GFC_t *GFC,
                              uint16_t GFC_txIdx,
                              uint16_t CANidTxGFC)
 {
-    CO_ReturnError_t r;
     if (GFC == NULL || valid == NULL || GFC_CANdevRx == NULL ||
         GFC_CANdevTx == NULL) {
         return CO_ERROR_ILLEGAL_ARGUMENT;
@@ -90,12 +91,15 @@ CO_ReturnError_t CO_GFC_init(CO_GFC_t *GFC,
         0,             /* number of data bytes */
         0);            /* synchronous message flag bit */
 
-    if (GFC->CANtxBuff == 0) {
+    if (GFC->CANtxBuff == NULL) {
         return CO_ERROR_TX_UNCONFIGURED;
     }
+#else
+    (void)GFC_txIdx;    /* unused */
+    (void)CANidTxGFC;   /* unused */
 #endif
 #if (CO_CONFIG_GFC) & CO_CONFIG_GFC_CONSUMER
-    r = CO_CANrxBufferInit(
+    const CO_ReturnError_t r = CO_CANrxBufferInit(
         GFC_CANdevRx,    /* CAN device */
         GFC_rxIdx,       /* rx buffer index */
         CANidRxGFC,      /* CAN identifier */
@@ -106,6 +110,9 @@ CO_ReturnError_t CO_GFC_init(CO_GFC_t *GFC,
     if (r != CO_ERROR_NO) {
         return r;
     }
+#else
+    (void)GFC_rxIdx;    /* unused */
+    (void)CANidRxGFC;   /* unused */
 #endif
 
     return CO_ERROR_NO;
@@ -120,3 +127,5 @@ CO_ReturnError_t CO_GFCsend(CO_GFC_t *GFC)
     return CO_ERROR_NO;
 }
 #endif
+
+#endif /* (CO_CONFIG_GFC) & CO_CONFIG_GFC_ENABLE */

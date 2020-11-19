@@ -37,9 +37,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <endian.h>
+#ifndef CO_SINGLE_THREAD
 #include <pthread.h>
+#endif
 #include <linux/can.h>
 #include <net/if.h>
+#include <sys/epoll.h>
 
 #ifdef CO_DRIVER_CUSTOM
 #include "CO_driver_custom.h"
@@ -50,57 +53,57 @@
 extern "C" {
 #endif
 
-/* Stack configuration override from CO_driver.h.
+/* Stack configuration override default values.
  * For more information see file CO_config.h. */
+#ifdef CO_SINGLE_THREAD
+#define CO_CONFIG_FLAG_CALLBACK_PRE_USED 0
+#else
+#define CO_CONFIG_FLAG_CALLBACK_PRE_USED CO_CONFIG_FLAG_CALLBACK_PRE
+#endif
+
 #ifndef CO_CONFIG_NMT
-#define CO_CONFIG_NMT (CO_CONFIG_FLAG_CALLBACK_PRE | \
-                       CO_CONFIG_FLAG_TIMERNEXT | \
-                       CO_CONFIG_NMT_CALLBACK_CHANGE | \
-                       CO_CONFIG_NMT_MASTER)
-#endif
-
-#ifndef CO_CONFIG_SDO
-#define CO_CONFIG_SDO (CO_CONFIG_FLAG_CALLBACK_PRE | \
-                       CO_CONFIG_FLAG_TIMERNEXT | \
-                       CO_CONFIG_SDO_SEGMENTED | \
-                       CO_CONFIG_SDO_BLOCK)
-#endif
-
-#ifndef CO_CONFIG_SDO_BUFFER_SIZE
-#define CO_CONFIG_SDO_BUFFER_SIZE 1800
-#endif
-
-#ifndef CO_CONFIG_EM
-#define CO_CONFIG_EM (CO_CONFIG_FLAG_CALLBACK_PRE | \
-                      CO_CONFIG_FLAG_TIMERNEXT | \
-                      CO_CONFIG_EM_CONSUMER)
+#define CO_CONFIG_NMT (CO_CONFIG_NMT_CALLBACK_CHANGE | \
+                       CO_CONFIG_NMT_MASTER | \
+                       CO_CONFIG_FLAG_CALLBACK_PRE_USED | \
+                       CO_CONFIG_FLAG_TIMERNEXT)
 #endif
 
 #ifndef CO_CONFIG_HB_CONS
-#define CO_CONFIG_HB_CONS (CO_CONFIG_FLAG_CALLBACK_PRE | \
+#define CO_CONFIG_HB_CONS (CO_CONFIG_HB_CONS_ENABLE | \
+                           CO_CONFIG_HB_CONS_CALLBACK_CHANGE | \
+                           CO_CONFIG_FLAG_CALLBACK_PRE_USED | \
+                           CO_CONFIG_FLAG_TIMERNEXT)
+#endif
+
+#ifndef CO_CONFIG_EM
+#define CO_CONFIG_EM (CO_CONFIG_EM_PRODUCER | \
+                      CO_CONFIG_EM_HISTORY | \
+                      CO_CONFIG_EM_CONSUMER | \
+                      CO_CONFIG_FLAG_CALLBACK_PRE_USED | \
+                      CO_CONFIG_FLAG_TIMERNEXT | \
+                      CO_CONFIG_FLAG_OD_DYNAMIC)
+#endif
+
+#ifndef CO_CONFIG_SDO_SRV
+#define CO_CONFIG_SDO_SRV (CO_CONFIG_SDO_SRV_SEGMENTED | \
+                           CO_CONFIG_SDO_SRV_BLOCK | \
+                           CO_CONFIG_FLAG_CALLBACK_PRE_USED | \
                            CO_CONFIG_FLAG_TIMERNEXT | \
-                           CO_CONFIG_HB_CONS_CALLBACK_CHANGE)
+                           CO_CONFIG_FLAG_OD_DYNAMIC)
 #endif
 
-#ifndef CO_CONFIG_PDO
-#define CO_CONFIG_PDO (CO_CONFIG_FLAG_CALLBACK_PRE | \
-                       CO_CONFIG_FLAG_TIMERNEXT | \
-                       CO_CONFIG_PDO_SYNC_ENABLE | \
-                       CO_CONFIG_RPDO_CALLS_EXTENSION | \
-                       CO_CONFIG_TPDO_CALLS_EXTENSION)
-#endif
-
-#ifndef CO_CONFIG_SYNC
-#define CO_CONFIG_SYNC (CO_CONFIG_FLAG_CALLBACK_PRE | \
-                        CO_CONFIG_FLAG_TIMERNEXT)
+#ifndef CO_CONFIG_SDO_SRV_BUFFER_SIZE
+#define CO_CONFIG_SDO_SRV_BUFFER_SIZE (127*7)
 #endif
 
 #ifndef CO_CONFIG_SDO_CLI
-#define CO_CONFIG_SDO_CLI (CO_CONFIG_FLAG_CALLBACK_PRE | \
-                           CO_CONFIG_FLAG_TIMERNEXT | \
+#define CO_CONFIG_SDO_CLI (CO_CONFIG_SDO_CLI_ENABLE | \
                            CO_CONFIG_SDO_CLI_SEGMENTED | \
                            CO_CONFIG_SDO_CLI_BLOCK | \
-                           CO_CONFIG_SDO_CLI_LOCAL)
+                           CO_CONFIG_SDO_CLI_LOCAL | \
+                           CO_CONFIG_FLAG_CALLBACK_PRE_USED | \
+                           CO_CONFIG_FLAG_TIMERNEXT | \
+                           CO_CONFIG_FLAG_OD_DYNAMIC)
 #endif
 
 #ifndef CO_CONFIG_SDO_CLI_BUFFER_SIZE
@@ -108,19 +111,38 @@ extern "C" {
 #endif
 
 #ifndef CO_CONFIG_TIME
-#define CO_CONFIG_TIME (CO_CONFIG_FLAG_CALLBACK_PRE)
+#define CO_CONFIG_TIME (CO_CONFIG_TIME_ENABLE | \
+                        CO_CONFIG_TIME_PRODUCER | \
+                        CO_CONFIG_FLAG_CALLBACK_PRE_USED)
+#endif
+
+#ifndef CO_CONFIG_SYNC
+#define CO_CONFIG_SYNC (CO_CONFIG_SYNC_ENABLE | \
+                        CO_CONFIG_SYNC_PRODUCER | \
+                        CO_CONFIG_FLAG_CALLBACK_PRE_USED | \
+                        CO_CONFIG_FLAG_TIMERNEXT)
+#endif
+
+#ifndef CO_CONFIG_PDO
+#define CO_CONFIG_PDO (CO_CONFIG_RPDO_ENABLE | \
+                       CO_CONFIG_TPDO_ENABLE | \
+                       CO_CONFIG_PDO_SYNC_ENABLE | \
+                       CO_CONFIG_RPDO_CALLS_EXTENSION | \
+                       CO_CONFIG_TPDO_CALLS_EXTENSION | \
+                       CO_CONFIG_FLAG_CALLBACK_PRE_USED | \
+                       CO_CONFIG_FLAG_TIMERNEXT)
 #endif
 
 #ifndef CO_CONFIG_LEDS
-#define CO_CONFIG_LEDS (CO_CONFIG_FLAG_TIMERNEXT | \
-                        CO_CONFIG_LEDS_ENABLE)
+#define CO_CONFIG_LEDS (CO_CONFIG_LEDS_ENABLE | \
+                        CO_CONFIG_FLAG_TIMERNEXT)
 #endif
 
 #ifndef CO_CONFIG_LSS
-#define CO_CONFIG_LSS (CO_CONFIG_FLAG_CALLBACK_PRE | \
-                       CO_CONFIG_LSS_SLAVE | \
+#define CO_CONFIG_LSS (CO_CONFIG_LSS_SLAVE | \
                        CO_CONFIG_LSS_SLAVE_FASTSCAN_DIRECT_RESPOND | \
-                       CO_CONFIG_LSS_MASTER)
+                       CO_CONFIG_LSS_MASTER | \
+                       CO_CONFIG_FLAG_CALLBACK_PRE_USED)
 #endif
 
 #ifndef CO_CONFIG_GTW
@@ -135,6 +157,22 @@ extern "C" {
 #define CO_CONFIG_GTW_BLOCK_DL_LOOP 3
 #define CO_CONFIG_GTWA_COMM_BUF_SIZE 2000
 #define CO_CONFIG_GTWA_LOG_BUF_SIZE 10000
+#endif
+
+#ifndef CO_CONFIG_CRC16
+#define CO_CONFIG_CRC16 (CO_CONFIG_CRC16_ENABLE)
+#endif
+
+#ifndef CO_CONFIG_FIFO
+#define CO_CONFIG_FIFO (CO_CONFIG_FIFO_ENABLE | \
+                        CO_CONFIG_FIFO_ALT_READ | \
+                        CO_CONFIG_FIFO_CRC16_CCITT | \
+                        CO_CONFIG_FIFO_ASCII_COMMANDS | \
+                        CO_CONFIG_FIFO_ASCII_DATATYPES)
+#endif
+
+#ifndef CO_CONFIG_TRACE
+//#define CO_CONFIG_TRACE (CO_CONFIG_TRACE_ENABLE)
 #endif
 
 
@@ -250,8 +288,7 @@ typedef struct {
     uint32_t mask;
     void *object;
     void (*CANrx_callback)(void *object, void *message);
-    const void         *CANptr;         /* CAN Interface identifier from last
-                                           message */
+    int can_ifindex;           /* CAN Interface index from last message */
     struct timespec     timestamp;      /* time of reception of last message */
 } CO_CANrx_t;
 
@@ -263,16 +300,23 @@ typedef struct {
     uint8_t data[8];
     volatile bool_t bufferFull; /* not used */
     volatile bool_t syncFlag;   /* info about transmit message */
-    const void *CANptr;         /* CAN Interface identifier to use */
+    int can_ifindex;            /* CAN Interface index to use */
 } CO_CANtx_t;
 
 
 /* Max COB ID for standard frame format */
 #define CO_CAN_MSG_SFF_MAX_COB_ID (1 << CAN_SFF_ID_BITS)
 
+/* CAN interface object (CANptr), passed to CO_CANinit() */
+typedef struct {
+    int can_ifindex;            /* CAN Interface index */
+    int epoll_fd;               /* File descriptor for epoll, which waits for
+                                   CAN receive event */
+} CO_CANptrSocketCan_t;
+
 /* socketCAN interface object */
 typedef struct {
-    const void *CANptr;         /* CAN Interface identifier */
+    int can_ifindex;            /* CAN Interface index */
     char ifName[IFNAMSIZ];      /* CAN Interface name */
     int fd;                     /* socketCAN file descriptor */
 #if CO_DRIVER_ERROR_REPORTING > 0 || defined CO_DOXYGEN
@@ -294,10 +338,8 @@ typedef struct {
     uint16_t txSize;
     uint16_t CANerrorStatus;
     volatile bool_t CANnormal;
-    int fdEvent;                /* notification event file descriptor */
-    int fdEpoll;                /* epoll FD for event, CANrx sockets in all
-                                   interfaces and fdTimerRead */
-    int fdTimerRead;            /* timer handle from CANrxWait() */
+    int epoll_fd;               /* File descriptor for epoll, which waits for
+                                   CAN receive event */
 #if CO_DRIVER_MULTI_INTERFACE > 0 || defined CO_DOXYGEN
     /* Lookup tables Cob ID to rx/tx array index.
      *  Only feasible for SFF Messages. */
@@ -306,6 +348,15 @@ typedef struct {
 #endif
 } CO_CANmodule_t;
 
+#ifdef CO_SINGLE_THREAD
+#define CO_LOCK_CAN_SEND()
+#define CO_UNLOCK_CAN_SEND()
+#define CO_LOCK_EMCY()
+#define CO_UNLOCK_EMCY()
+#define CO_LOCK_OD()
+#define CO_UNLOCK_OD()
+#define CO_MemoryBarrier()
+#else
 
 /* (un)lock critical section in CO_CANsend() - unused */
 #define CO_LOCK_CAN_SEND()
@@ -331,11 +382,13 @@ static inline void CO_UNLOCK_OD() {
 
 /* Synchronization between CAN receive and message processing threads. */
 #define CO_MemoryBarrier() {__sync_synchronize();}
+#endif /* CO_SINGLE_THREAD */
+
 #define CO_FLAG_READ(rxNew) ((rxNew) != NULL)
 #define CO_FLAG_SET(rxNew) {CO_MemoryBarrier(); rxNew = (void*)1L;}
 #define CO_FLAG_CLEAR(rxNew) {CO_MemoryBarrier(); rxNew = NULL;}
 
-#endif /* CO_DOXYGEN */
+#endif /* #ifndef CO_DOXYGEN */
 
 
 #if CO_DRIVER_MULTI_INTERFACE > 0 || defined CO_DOXYGEN
@@ -345,12 +398,12 @@ static inline void CO_UNLOCK_OD() {
  * Function must be called after CO_CANmodule_init.
  *
  * @param CANmodule This object will be initialized.
- * @param CANptr CAN module interface index (return value if_nametoindex(), NO pointer!).
+ * @param can_ifindex CAN Interface index
  * @return #CO_ReturnError_t: CO_ERROR_NO, CO_ERROR_ILLEGAL_ARGUMENT,
  * CO_ERROR_SYSCALL or CO_ERROR_INVALID_STATE.
  */
 CO_ReturnError_t CO_CANmodule_addInterface(CO_CANmodule_t *CANmodule,
-                                           const void *CANptr);
+                                           int can_ifindex);
 
 /**
  * Check on which interface the last message for one message buffer was received
@@ -394,13 +447,15 @@ CO_ReturnError_t CO_CANtxBuffer_setInterface(CO_CANmodule_t *CANmodule,
 
 
 /**
- * Functions receives CAN messages (blocking)
+ * Receives CAN messages from matching epoll event
  *
- * This function waits for received CAN message, CAN error frame, notification
- * event or fdTimer expiration. In case of CAN message it searches _rxArray_
-  from* CO_CANmodule_t and if matched it calls the corresponding CANrx_callback,
- * optionally copies received CAN message to _buffer_ and returns index of
- * matched _rxArray_.
+ * This function verifies, if epoll event matches event from any CANinterface.
+ * In case of match, message is read from CAN and pre-processed for CANopenNode
+ * objects. CAN error frames are also processed.
+ *
+ * In case of CAN message function searches _rxArray_ from CO_CANmodule_t and
+ * if matched it calls the corresponding CANrx_callback, optionally copies
+ * received CAN message to _buffer_ and returns index of matched _rxArray_.
  *
  * This function can be used in two ways, which can be combined:
  * - automatic mode: If CANrx_callback is specified for matched _rxArray_, then
@@ -408,16 +463,17 @@ CO_ReturnError_t CO_CANtxBuffer_setInterface(CO_CANmodule_t *CANmodule,
  * - manual mode: evaluate message filters, return received message
  *
  * @param CANmodule This object.
- * @param fdTimer File descriptor with activated timeout. If set to -1, then
- *                timer will not be used. File descriptor must be read
- *                externally if retval == -1! Read must be nonblocking and
- *                provides number of timer expirations since last read.
+ * @param ev Epoll event, which vill be verified for matches.
  * @param [out] buffer Storage for received message or _NULL_ if not used.
- * @retval >= 0 index of received message in array from CO_CANmodule_t
- *              _rxArray_, copy of CAN message is available in _buffer_.
- * @retval -1 no message received (timer expired or notification event or error)
+ * @param [out] msgIndex Index of received message in array from CO_CANmodule_t
+ * _rxArray_, copy of CAN message is available in _buffer_.
+ *
+ * @return True, if epoll event matches any CAN interface.
  */
-int32_t CO_CANrxWait(CO_CANmodule_t* CANmodule, int fdTimer, CO_CANrxMsg_t* buffer);
+bool_t CO_CANrxFromEpoll(CO_CANmodule_t *CANmodule,
+                         struct epoll_event *ev,
+                         CO_CANrxMsg_t *buffer,
+                         int32_t *msgIndex);
 
 /** @} */
 

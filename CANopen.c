@@ -188,8 +188,6 @@ CO_ReturnError_t CO_new(uint32_t *heapMemoryUsed) {
     CO->TIME = (CO_TIME_t *)calloc(1, sizeof(CO_TIME_t));
     if (CO->TIME == NULL) errCnt++;
     CO_memoryUsed += sizeof(CO_TIME_t);
-#else
-    CO->TIME = NULL;
 #endif
 
 #if CO_NO_GFC == 1
@@ -458,6 +456,8 @@ void CO_delete(void *CANptr) {
 CO_ReturnError_t CO_new(uint32_t *heapMemoryUsed) {
     int16_t i;
 
+    (void)heapMemoryUsed;
+
     /* If CANopen was initialized before, return. */
     if (CO != NULL) {
         return CO_ERROR_NO;
@@ -492,8 +492,6 @@ CO_ReturnError_t CO_new(uint32_t *heapMemoryUsed) {
 #if CO_NO_TIME == 1
     /* TIME */
     CO->TIME = &COO_TIME;
-#else
-    CO->TIME = NULL;
 #endif
 
 #if CO_NO_GFC == 1
@@ -611,15 +609,15 @@ CO_ReturnError_t CO_LSSinit(uint8_t *nodeId,
     lssAddress.identity.vendorID = OD_identity.vendorID;
 
     err = CO_LSSslave_init(CO->LSSslave,
-                           lssAddress,
+                           &lssAddress,
                            bitRate,
                            nodeId,
                            CO->CANmodule[0],
                            CO_RXCAN_LSS_SLV,
-                           CO_CAN_ID_LSS_SRV,
+                           CO_CAN_ID_LSS_MST,
                            CO->CANmodule[0],
                            CO_TXCAN_LSS_SLV,
-                           CO_CAN_ID_LSS_CLI);
+                           CO_CAN_ID_LSS_SLV);
 
     return err;
 }
@@ -640,24 +638,24 @@ CO_ReturnError_t CO_CANopenInit(uint8_t nodeId) {
     else
 #endif
     if (nodeId < 1 || nodeId > 127) {
-        return CO_ERROR_PARAMETERS;
+        return CO_ERROR_ILLEGAL_ARGUMENT;
     }
     /* Verify parameters from CO_OD */
 #if CO_NO_SRDO != 0
     if (sizeof(OD_SRDOCommunicationParameter_t) != sizeof(CO_SRDOCommPar_t) ||
         sizeof(OD_SRDOMappingParameter_t)       != sizeof(CO_SRDOMapPar_t)) {
-        return CO_ERROR_PARAMETERS;
+        return CO_ERROR_OD_PARAMETERS;
     }
 #endif
     if (sizeof(OD_TPDOCommunicationParameter_t) != sizeof(CO_TPDOCommPar_t) ||
         sizeof(OD_TPDOMappingParameter_t)       != sizeof(CO_TPDOMapPar_t)  ||
         sizeof(OD_RPDOCommunicationParameter_t) != sizeof(CO_RPDOCommPar_t) ||
         sizeof(OD_RPDOMappingParameter_t)       != sizeof(CO_RPDOMapPar_t)) {
-        return CO_ERROR_PARAMETERS;
+        return CO_ERROR_OD_PARAMETERS;
     }
 #if CO_NO_SDO_CLIENT != 0
     if (sizeof(OD_SDOClientParameter_t)         != sizeof(CO_SDOclientPar_t)) {
-        return CO_ERROR_PARAMETERS;
+        return CO_ERROR_OD_PARAMETERS;
     }
 #endif
 
@@ -680,8 +678,8 @@ CO_ReturnError_t CO_CANopenInit(uint8_t nodeId) {
         uint32_t COB_IDServerToClient;
         if (i == 0) {
             /*Default SDO server must be located at first index*/
-            COB_IDClientToServer = CO_CAN_ID_RSDO + nodeId;
-            COB_IDServerToClient = CO_CAN_ID_TSDO + nodeId;
+            COB_IDClientToServer = CO_CAN_ID_SDO_CLI + nodeId;
+            COB_IDServerToClient = CO_CAN_ID_SDO_SRV + nodeId;
         }
         else {
             COB_IDClientToServer =
@@ -904,10 +902,10 @@ CO_ReturnError_t CO_CANopenInit(uint8_t nodeId) {
                             CO_LSSmaster_DEFAULT_TIMEOUT,
                             CO->CANmodule[0],
                             CO_RXCAN_LSS_MST,
-                            CO_CAN_ID_LSS_CLI,
+                            CO_CAN_ID_LSS_SLV,
                             CO->CANmodule[0],
                             CO_TXCAN_LSS_MST,
-                            CO_CAN_ID_LSS_SRV);
+                            CO_CAN_ID_LSS_MST);
 
     if (err) return err;
 #endif

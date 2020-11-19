@@ -42,9 +42,6 @@
 #if CO_CONFIG_SDO_BUFFER_SIZE < 7
     #error CO_CONFIG_SDO_BUFFER_SIZE must be greater than 7
 #endif
-#if ((CO_CONFIG_SDO) & CO_CONFIG_SDO_BLOCK) && !((CO_CONFIG_SDO) & CO_CONFIG_SDO_SEGMENTED)
-    #error CO_CONFIG_SDO_BLOCK is enabled, CO_CONFIG_SDO_SEGMENTED must be enabled also.
-#endif
 
 static void CO_SDO_receive_done(CO_SDO_t *SDO){
 #if CO_SDO_RX_DATA_SIZE > 1
@@ -100,24 +97,26 @@ static void CO_SDO_receive(void *object, void *msg){
             /* check correct sequence number. */
             if(seqno == (SDO->sequence + 1U)) {
                 /* sequence is correct */
-                uint8_t i;
 
-                SDO->sequence++;
+                /* check if buffer can store whole message just in case */
+                if (CO_CONFIG_SDO_BUFFER_SIZE - SDO->bufferOffset >= 7) {
+                    uint8_t i;
 
-                /* copy data */
-                for(i=1; i<8; i++) {
-                    SDO->ODF_arg.data[SDO->bufferOffset++] = data[i]; //SDO->ODF_arg.data is equal as SDO->databuffer
-                    if(SDO->bufferOffset >= CO_CONFIG_SDO_BUFFER_SIZE) {
-                        /* buffer full, break reception */
+                    SDO->sequence++;
+
+                    /* copy data */
+                    for(i=1; i<8; i++) {
+                        SDO->ODF_arg.data[SDO->bufferOffset++] = data[i]; //SDO->ODF_arg.data is equal as SDO->databuffer
+                    }
+
+                    /* break reception if last segment, block ends or block sequence is too large */
+                    if(((CANrxData[0] & 0x80U) == 0x80U) || (SDO->sequence >= SDO->blksize)) {
                         SDO->state = CO_SDO_ST_DOWNLOAD_BL_SUB_RESP;
                         CO_SDO_receive_done(SDO);
-                        break;
                     }
-                }
-
-                /* break reception if last segment, block ends or block sequence is too large */
-                if(((CANrxData[0] & 0x80U) == 0x80U) || (SDO->sequence >= SDO->blksize)) {
-                    SDO->state = CO_SDO_ST_DOWNLOAD_BL_SUB_RESP;
+                } else {
+                    /* buffer is full, ignore this segment, send response without resetting sequence */
+                    SDO->state = CO_SDO_ST_DOWNLOAD_BL_SUB_RESP_2;
                     CO_SDO_receive_done(SDO);
                 }
             }
@@ -669,9 +668,16 @@ uint32_t CO_SDO_writeOD(CO_SDO_t *SDO, uint16_t length){
 
 /******************************************************************************/
 static void CO_SDO_process_done(CO_SDO_t *SDO, uint32_t *timerNext_us) {
+    (void)timerNext_us; /* may be unused */
+
 #if CO_SDO_RX_DATA_SIZE > 1
     uint8_t proc = SDO->CANrxProc;
     uint8_t newProc = proc;
+
+    /* check if buffer needs to be free */
+    if (!CO_FLAG_READ(SDO->CANrxNew[proc])) {
+        return;
+    }
 
     if (++newProc >= CO_SDO_RX_DATA_SIZE)
         newProc = 0;
@@ -684,7 +690,6 @@ static void CO_SDO_process_done(CO_SDO_t *SDO, uint32_t *timerNext_us) {
         timerNext_us = 0; /* Set timerNext_us to 0 to inform OS to call CO_SDO_process function again without delay. */
 #endif
 #else
-    (void)(timerNext_us);
     CO_FLAG_CLEAR(SDO->CANrxNew[0]);
 #endif
 }
@@ -697,7 +702,7 @@ static void CO_SDO_abort(CO_SDO_t *SDO, uint32_t code){
     SDO->CANtxBuff->data[3] = SDO->ODF_arg.subIndex;
     CO_memcpySwap4(&SDO->CANtxBuff->data[4], &code);
     SDO->state = CO_SDO_ST_IDLE;
-    /* skip all received messages in queue */
+    /* skip all received messages in queue if any */
     while (CO_FLAG_READ(SDO->CANrxNew[SDO->CANrxProc]))
         CO_SDO_process_done(SDO, NULL);
     CO_CANsend(SDO->CANdevTx, SDO->CANtxBuff);
@@ -727,6 +732,7 @@ int8_t CO_SDO_process(
     /* SDO is allowed to work only in operational or pre-operational NMT state */
     if(!NMTisPreOrOperational){
         SDO->state = CO_SDO_ST_IDLE;
+        /* free receive buffer if it is not empty */
         CO_SDO_process_done(SDO, timerNext_us);
         return 0;
     }
@@ -1457,9 +1463,7 @@ int8_t CO_SDO_process(
     }
 
     /* free receive buffer if it is not empty */
-    if (isNew) {
-        CO_SDO_process_done(SDO, timerNext_us);
-    }
+    CO_SDO_process_done(SDO, timerNext_us);
 
     /* send message */
     if(sendResponse) {

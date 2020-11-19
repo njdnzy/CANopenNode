@@ -4,7 +4,6 @@ Change Log
 [Unreleased master]
 -------------------------
 - [Full ChangeLog](https://github.com/CANopenNode/CANopenNode/compare/v1.3...master)
-- See {TODO diff} for example of change in user application interface.
 ### Removed
 - All drivers removed from this project, except Neuberger-socketCAN for Linux.
 ### Changed
@@ -30,13 +29,15 @@ Change Log
 - CO_Linux_threads.h, function `void CANrx_threadTmr_init(uint16_t interval_in_milliseconds (changed to) uint32_t interval_in_microseconds)`
 - CO_CANrxBufferInit(): remove check COB ID already used.
 - change macros CO_DRIVER_MULTI_INTERFACE and CO_DRIVER_ERROR_REPORTING. To enable(disable), set to 1(0).
+- Rename CO_Linux_threads.h/.c to CO_epoll_interface.h/.c and reorganize them. Move epoll, timerfd and eventfd system calls from CO_driver.c to here.
+- Can run in single thread, including gateway.
 ### Fixed
 - Bugfix in `CO_HBconsumer_process()`: argument `timeDifference_us` was set to 0 inside for loop, fixed now.
 - BUG in CO_HBconsumer.c #168
 ### Added
 - Documentation added to `doc` directory: CHANGELOG.md, deviceSupport.md, gettingStarted.md, LSSusage.md and traceUsage.md.
 - All CANopen objects calculates next timer info for OS. Useful for energy saving.
-- Added file CO_config.h for stack configuration. Can be overridden by target specific or by custom definitions.
+- Added file CO_config.h for stack configuration. Can be overridden by target specific or by custom definitions. It enables/disables whole CanOpenNode objects or parts of them. It also specifies some constants.
 - CO_fifo.h/c for fifo data buffer, used with rewritten SDO client, etc.
 - CANopen gateway-ascii command interface according to CiA309-3 as a microcontroller independent module. It includes NMT master, LSS master and SDO client interface. Interface is non-blocking, it is added to mainline. Example for Linux stdio and socket is included.
 

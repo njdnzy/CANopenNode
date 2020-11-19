@@ -23,6 +23,9 @@
  * limitations under the License.
  */
 
+#ifndef CO_OD_STORAGE
+#define CO_OD_STORAGE 1
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,9 +43,11 @@
 #include <sys/reboot.h>
 
 #include "CANopen.h"
-#include "CO_OD_storage.h"
 #include "CO_error.h"
-#include "CO_Linux_threads.h"
+#include "CO_epoll_interface.h"
+#if CO_OD_STORAGE == 1
+#include "CO_OD_storage.h"
+#endif
 
 /* Call external application functions. */
 #if __has_include("CO_application.h")
@@ -51,7 +56,7 @@
 #endif
 
 /* Add trace functionality for recording variables over time */
-#if CO_NO_TRACE > 0
+#if (CO_CONFIG_TRACE) & CO_CONFIG_TRACE_ENABLE
 #include "CO_time_trace.h"
 #endif
 
@@ -71,23 +76,29 @@
 
 
 /* Other variables and objects */
-volatile static bool_t      CANopenConfiguredOK = false; /* Indication if CANopen modules are configured */
+#ifndef CO_SINGLE_THREAD
+CO_epoll_t                  epRT; /* Epoll-timer object for realtime thread */
 static int                  rtPriority = -1;    /* Real time priority, configurable by arguments. (-1=RT disabled) */
+#endif
 static uint8_t              CO_pendingNodeId = 0xFF;/* Use value from Object Dictionary or by arguments (set to 1..127
                                                      * or unconfigured=0xFF). Can be changed by LSS slave. */
 static uint8_t              CO_activeNodeId = 0xFF;/* Copied from CO_pendingNodeId in the communication reset section */
 static uint16_t             CO_pendingBitRate = 0;  /* CAN bitrate, not used here */
+#if CO_OD_STORAGE == 1
 static CO_OD_storage_t      odStor;             /* Object Dictionary storage object for CO_OD_ROM */
 static CO_OD_storage_t      odStorAuto;         /* Object Dictionary storage object for CO_OD_EEPROM */
 static char                *odStorFile_rom    = "od_storage";       /* Name of the file */
 static char                *odStorFile_eeprom = "od_storage_auto";  /* Name of the file */
-#if CO_NO_TRACE > 0
+#endif
+#if (CO_CONFIG_TRACE) & CO_CONFIG_TRACE_ENABLE
 static CO_time_t            CO_time;            /* Object for current time */
 #endif
 
 /* Helper functions ***********************************************************/
+#ifndef CO_SINGLE_THREAD
 /* Realtime thread */
 static void* rt_thread(void* arg);
+#endif
 
 /* Signal handler */
 volatile sig_atomic_t CO_endProgram = 0;
@@ -155,16 +166,19 @@ static void NmtChangedCallback(CO_NMT_internalState_t state)
     log_printf(LOG_NOTICE, DBG_NMT_CHANGE, NmtState2Str(state), state);
 }
 
+#if (CO_CONFIG_HB_CONS) & CO_CONFIG_HB_CONS_CALLBACK_CHANGE
 /* callback for monitoring Heartbeat remote NMT state change */
-static void HeartbeatNmtChangedCallback(uint8_t nodeId,
+static void HeartbeatNmtChangedCallback(uint8_t nodeId, uint8_t idx,
                                         CO_NMT_internalState_t state,
                                         void *object)
 {
     (void)object;
     log_printf(LOG_NOTICE, DBG_HB_CONS_NMT_CHANGE,
-               nodeId, NmtState2Str(state), state);
+               nodeId, idx, NmtState2Str(state), state);
 }
+#endif
 
+#if CO_OD_STORAGE == 1
 /* callback for storing node id and bitrate */
 static bool_t LSScfgStoreCallback(void *object, uint8_t id, uint16_t bitRate) {
     (void)object;
@@ -172,6 +186,7 @@ static bool_t LSScfgStoreCallback(void *object, uint8_t id, uint16_t bitRate) {
     OD_CANBitRate = bitRate;
     return true;
 }
+#endif
 
 /* Print usage */
 static void printUsage(char *progName) {
@@ -181,13 +196,20 @@ printf(
 "\n"
 "Options:\n"
 "  -i <Node ID>        CANopen Node-id (1..127) or 0xFF(unconfigured). If not\n"
-"                      specified, value from Object dictionary (0x2101) is used.\n"
+"                      specified, value from Object dictionary (0x2101) is used.\n");
+#ifndef CO_SINGLE_THREAD
+printf(
 "  -p <RT priority>    Real-time priority of RT thread (1 .. 99). If not set or\n"
-"                      set to -1, then normal scheduler is used for RT thread.\n"
-"  -r                  Enable reboot on CANopen NMT reset_node command. \n"
+"                      set to -1, then normal scheduler is used for RT thread.\n");
+#endif
+printf(
+"  -r                  Enable reboot on CANopen NMT reset_node command. \n");
+#if CO_OD_STORAGE == 1
+printf(
 "  -s <ODstorage file> Set Filename for OD storage ('od_storage' is default).\n"
 "  -a <ODstorageAuto>  Set Filename for automatic storage variables from\n"
 "                      Object dictionary. ('od_storage_auto' is default).\n");
+#endif
 #if (CO_CONFIG_GTW) & CO_CONFIG_GTW_ASCII
 printf(
 "  -c <interface>      Enable command interface for master functionality.\n"
@@ -213,11 +235,16 @@ printf(
  * Mainline thread
  ******************************************************************************/
 int main (int argc, char *argv[]) {
+    CO_epoll_t epMain;
+#ifndef CO_SINGLE_THREAD
     pthread_t rt_thread_id;
+#endif
     CO_NMT_reset_cmd_t reset = CO_RESET_NOT;
     CO_ReturnError_t err;
+#if CO_OD_STORAGE == 1
     CO_ReturnError_t odStorStatus_rom, odStorStatus_eeprom;
-    intptr_t CANdevice0Index = 0;
+#endif
+    CO_CANptrSocketCan_t CANptr = {0};
     int opt;
     bool_t firstRun = true;
 
@@ -225,6 +252,7 @@ int main (int argc, char *argv[]) {
     bool_t nodeIdFromArgs = false;  /* True, if program arguments are used for CANopen Node Id */
     bool_t rebootEnable = false;    /* Configurable by arguments */
 #if (CO_CONFIG_GTW) & CO_CONFIG_GTW_ASCII
+    CO_epoll_gtw_t epGtw;
     /* values from CO_commandInterface_t */
     int32_t commandInterface = CO_COMMAND_IF_DISABLED;
     /* local socket path if commandInterface == CO_COMMAND_IF_LOCAL_SOCKET */
@@ -253,8 +281,10 @@ int main (int argc, char *argv[]) {
                 CO_pendingNodeId = (uint8_t)strtol(optarg, NULL, 0);
                 nodeIdFromArgs = true;
                 break;
+#ifndef CO_SINGLE_THREAD
             case 'p': rtPriority = strtol(optarg, NULL, 0);
                 break;
+#endif
             case 'r': rebootEnable = true;
                 break;
 #if (CO_CONFIG_GTW) & CO_CONFIG_GTW_ASCII
@@ -285,10 +315,12 @@ int main (int argc, char *argv[]) {
                 socketTimeout_ms = strtoul(optarg, NULL, 0);
                 break;
 #endif
+#if CO_OD_STORAGE == 1
             case 's': odStorFile_rom = optarg;
                 break;
             case 'a': odStorFile_eeprom = optarg;
                 break;
+#endif
             default:
                 printUsage(argv[0]);
                 exit(EXIT_FAILURE);
@@ -297,7 +329,7 @@ int main (int argc, char *argv[]) {
 
     if(optind < argc) {
         CANdevice = argv[optind];
-        CANdevice0Index = if_nametoindex(CANdevice);
+        CANptr.can_ifindex = if_nametoindex(CANdevice);
     }
 
     if(!nodeIdFromArgs) {
@@ -306,8 +338,8 @@ int main (int argc, char *argv[]) {
     }
 
     if((CO_pendingNodeId < 1 || CO_pendingNodeId > 127)
-#if CO_NO_LSS_SLAVE == 1
-        && CO_pendingNodeId != CO_LSS_NODE_ID_ASSIGNMENT
+#if (CO_CONFIG_LSS) & CO_CONFIG_LSS_SLAVE
+      && CO_NO_LSS_SLAVE == 1 && CO_pendingNodeId != CO_LSS_NODE_ID_ASSIGNMENT
 #endif
     ) {
         log_printf(LOG_CRIT, DBG_WRONG_NODE_ID, CO_pendingNodeId);
@@ -315,14 +347,16 @@ int main (int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
+#ifndef CO_SINGLE_THREAD
     if(rtPriority != -1 && (rtPriority < sched_get_priority_min(SCHED_FIFO)
                          || rtPriority > sched_get_priority_max(SCHED_FIFO))) {
         log_printf(LOG_CRIT, DBG_WRONG_PRIORITY, rtPriority);
         printUsage(argv[0]);
         exit(EXIT_FAILURE);
     }
+#endif
 
-    if(CANdevice0Index == 0) {
+    if(CANptr.can_ifindex == 0) {
         log_printf(LOG_CRIT, DBG_NO_CAN_DEVICE, CANdevice);
         exit(EXIT_FAILURE);
     }
@@ -339,6 +373,7 @@ int main (int argc, char *argv[]) {
     }
 
 
+#if CO_OD_STORAGE == 1
     /* Verify, if OD structures have proper alignment of initial values */
     if(CO_OD_RAM.FirstWord != CO_OD_RAM.LastWord) {
         log_printf(LOG_CRIT, DBG_OBJECT_DICTIONARY, "CO_OD_RAM");
@@ -357,7 +392,7 @@ int main (int argc, char *argv[]) {
     /* initialize Object Dictionary storage */
     odStorStatus_rom = CO_OD_storage_init(&odStor, (uint8_t*) &CO_OD_ROM, sizeof(CO_OD_ROM), odStorFile_rom);
     odStorStatus_eeprom = CO_OD_storage_init(&odStorAuto, (uint8_t*) &CO_OD_EEPROM, sizeof(CO_OD_EEPROM), odStorFile_eeprom);
-
+#endif
 
     /* Catch signals SIGINT and SIGTERM */
     if(signal(SIGINT, sigHandler) == SIG_ERR) {
@@ -370,6 +405,34 @@ int main (int argc, char *argv[]) {
     }
 
 
+    /* Create epoll functions */
+    err = CO_epoll_create(&epMain, MAIN_THREAD_INTERVAL_US);
+    if(err != CO_ERROR_NO) {
+        log_printf(LOG_CRIT, DBG_GENERAL,
+                   "CO_epoll_create(main), err=", err);
+        exit(EXIT_FAILURE);
+    }
+#ifndef CO_SINGLE_THREAD
+    err = CO_epoll_create(&epRT, TMR_THREAD_INTERVAL_US);
+    if(err != CO_ERROR_NO) {
+        log_printf(LOG_CRIT, DBG_GENERAL,
+                   "CO_epoll_create(RT), err=", err);
+        exit(EXIT_FAILURE);
+    }
+    CANptr.epoll_fd = epRT.epoll_fd;
+#else
+    CANptr.epoll_fd = epMain.epoll_fd;
+#endif
+#if (CO_CONFIG_GTW) & CO_CONFIG_GTW_ASCII
+    err = CO_epoll_createGtw(&epGtw, epMain.epoll_fd, commandInterface,
+                              socketTimeout_ms, localSocketPath);
+    if(err != CO_ERROR_NO) {
+        log_printf(LOG_CRIT, DBG_GENERAL, "CO_epoll_createGtw(), err=", err);
+        exit(EXIT_FAILURE);
+    }
+#endif
+
+
     while(reset != CO_RESET_APP && reset != CO_RESET_QUIT && CO_endProgram == 0) {
 /* CANopen communication reset - initialize CANopen objects *******************/
 
@@ -380,14 +443,13 @@ int main (int argc, char *argv[]) {
             CO_UNLOCK_OD();
         }
 
-
         /* Enter CAN configuration. */
-        CANopenConfiguredOK = false;
-        CO_CANsetConfigurationMode((void *)CANdevice0Index);
+        CO_CANsetConfigurationMode((void *)&CANptr);
+        CO_CANmodule_disable(CO->CANmodule[0]);
 
 
         /* initialize CANopen */
-        err = CO_CANinit((void *)CANdevice0Index, 0 /* bit rate not used */);
+        err = CO_CANinit((void *)&CANptr, 0 /* bit rate not used */);
         if(err != CO_ERROR_NO) {
             log_printf(LOG_CRIT, DBG_CAN_OPEN, "CO_CANinit()", err);
             exit(EXIT_FAILURE);
@@ -402,23 +464,28 @@ int main (int argc, char *argv[]) {
         CO_activeNodeId = CO_pendingNodeId;
 
         err = CO_CANopenInit(CO_activeNodeId);
-        if(err == CO_ERROR_NO) {
-            CANopenConfiguredOK = true;
-        }
-        else if(err != CO_ERROR_NODE_ID_UNCONFIGURED_LSS) {
+        if(err != CO_ERROR_NO && err != CO_ERROR_NODE_ID_UNCONFIGURED_LSS) {
             log_printf(LOG_CRIT, DBG_CAN_OPEN, "CO_CANopenInit()", err);
             exit(EXIT_FAILURE);
         }
 
         /* initialize part of threadMain and callbacks */
-        threadMainWait_init(CANopenConfiguredOK);
+        CO_epoll_initCANopenMain(&epMain, CO);
+#if (CO_CONFIG_GTW) & CO_CONFIG_GTW_ASCII
+        CO_epoll_initCANopenGtw(&epGtw, CO);
+#endif
+#if CO_OD_STORAGE == 1
         CO_LSSslave_initCfgStoreCallback(CO->LSSslave, NULL,
-                                            LSScfgStoreCallback);
-        if(CANopenConfiguredOK) {
+                                         LSScfgStoreCallback);
+#endif
+        if(!CO->nodeIdUnconfigured) {
             CO_EM_initCallbackRx(CO->em, EmergencyRxCallback);
             CO_NMT_initCallbackChanged(CO->NMT, NmtChangedCallback);
+#if (CO_CONFIG_HB_CONS) & CO_CONFIG_HB_CONS_CALLBACK_CHANGE
             CO_HBconsumer_initCallbackNmtChanged(CO->HBcons, NULL,
                                                  HeartbeatNmtChangedCallback);
+#endif
+#if CO_OD_STORAGE == 1
             /* initialize OD objects 1010 and 1011 and verify errors. */
             CO_OD_configure(CO->SDO[0], OD_H1010_STORE_PARAM_FUNC, CO_ODF_1010, (void*)&odStor, 0, 0U);
             CO_OD_configure(CO->SDO[0], OD_H1011_REST_PARAM_FUNC, CO_ODF_1011, (void*)&odStor, 0, 0U);
@@ -428,8 +495,9 @@ int main (int argc, char *argv[]) {
             if(odStorStatus_eeprom != CO_ERROR_NO) {
                 CO_errorReport(CO->em, CO_EM_NON_VOLATILE_MEMORY, CO_EMC_HARDWARE, (uint32_t)odStorStatus_eeprom + 1000);
             }
+#endif
 
-#if CO_NO_TRACE > 0
+#if (CO_CONFIG_TRACE) & CO_CONFIG_TRACE_ENABLE
             /* Initialize time */
             CO_time_init(&CO_time, CO->SDO[0], &OD_time.epochTimeBaseMs, &OD_time.epochTimeOffsetMs, 0x2130);
 #endif
@@ -442,15 +510,7 @@ int main (int argc, char *argv[]) {
         /* First time only initialization. */
         if(firstRun) {
             firstRun = false;
-
-
-            /* Init threadMainWait structure and file descriptors */
-            threadMainWait_initOnce(MAIN_THREAD_INTERVAL_US, commandInterface,
-                                    socketTimeout_ms, localSocketPath);
-
-            /* Init threadRT structure and file descriptors */
-            CANrx_threadTmr_init(TMR_THREAD_INTERVAL_US);
-
+#ifndef CO_SINGLE_THREAD
             /* Create rt_thread and set priority */
             if(pthread_create(&rt_thread_id, NULL, rt_thread, NULL) != 0) {
                 log_printf(LOG_CRIT, DBG_ERRNO, "pthread_create(rt_thread)");
@@ -465,17 +525,17 @@ int main (int argc, char *argv[]) {
                     exit(EXIT_FAILURE);
                 }
             }
-
+#endif
 #ifdef CO_USE_APPLICATION
             /* Execute optional additional application code */
-            app_programStart(CANopenConfiguredOK);
+            app_programStart(!CO->nodeIdUnconfigured);
 #endif
         } /* if(firstRun) */
 
 
 #ifdef CO_USE_APPLICATION
         /* Execute optional additional application code */
-        app_communicationReset(CANopenConfiguredOK);
+        app_communicationReset(!CO->nodeIdUnconfigured);
 #endif
 
 
@@ -489,38 +549,57 @@ int main (int argc, char *argv[]) {
 
         while(reset == CO_RESET_NOT && CO_endProgram == 0) {
 /* loop for normal program execution ******************************************/
-            uint32_t timer1usDiff = threadMainWait_process(&reset);
+            CO_epoll_wait(&epMain);
+#ifdef CO_SINGLE_THREAD
+            CO_epoll_processRT(&epMain, CO, false);
+#endif
+#if (CO_CONFIG_GTW) & CO_CONFIG_GTW_ASCII
+            CO_epoll_processGtw(&epGtw, CO, &epMain);
+#endif
+            CO_epoll_processMain(&epMain, CO, &reset);
+            CO_epoll_processLast(&epMain);
 
 #ifdef CO_USE_APPLICATION
-            app_programAsync(CANopenConfiguredOK, timer1usDiff);
+            app_programAsync(!CO->nodeIdUnconfigured, epMain.timeDifference_us);
 #endif
 
-            CO_OD_storage_autoSave(&odStorAuto, timer1usDiff, 60000000);
+#if CO_OD_STORAGE == 1
+            CO_OD_storage_autoSave(&odStorAuto,
+                                   epMain.timeDifference_us, 60000000);
+#endif
         }
-    }
+    } /* while(reset != CO_RESET_APP */
 
 
 /* program exit ***************************************************************/
     /* join threads */
     CO_endProgram = 1;
+#ifndef CO_SINGLE_THREAD
     if (pthread_join(rt_thread_id, NULL) != 0) {
         log_printf(LOG_CRIT, DBG_ERRNO, "pthread_join()");
         exit(EXIT_FAILURE);
     }
-
+#endif
 #ifdef CO_USE_APPLICATION
     /* Execute optional additional application code */
     app_programEnd();
 #endif
 
+#if CO_OD_STORAGE == 1
     /* Store CO_OD_EEPROM */
     CO_OD_storage_autoSave(&odStorAuto, 0, 0);
     CO_OD_storage_autoSaveClose(&odStorAuto);
+#endif
 
     /* delete objects from memory */
-    CANrx_threadTmr_close();
-    threadMainWait_close();
-    CO_delete((void *)CANdevice0Index);
+#ifndef CO_SINGLE_THREAD
+    CO_epoll_close(&epRT);
+#endif
+    CO_epoll_close(&epMain);
+#if (CO_CONFIG_GTW) & CO_CONFIG_GTW_ASCII
+    CO_epoll_closeGtw(&epGtw);
+#endif
+    CO_delete((void *)&CANptr);
 
     log_printf(LOG_INFO, DBG_CAN_OPEN_INFO, CO_activeNodeId, "finished");
 
@@ -536,7 +615,7 @@ int main (int argc, char *argv[]) {
     exit(EXIT_SUCCESS);
 }
 
-
+#ifndef CO_SINGLE_THREAD
 /*******************************************************************************
  * Realtime thread for CAN receive and threadTmr
  ******************************************************************************/
@@ -545,10 +624,11 @@ static void* rt_thread(void* arg) {
     /* Endless loop */
     while(CO_endProgram == 0) {
 
-        /* function may skip some milliseconds. Number of missed is returned */
-        CANrx_threadTmr_process();
+        CO_epoll_wait(&epRT);
+        CO_epoll_processRT(&epRT, CO, true);
+        CO_epoll_processLast(&epRT);
 
-#if CO_NO_TRACE > 0
+#if (CO_CONFIG_TRACE) & CO_CONFIG_TRACE_ENABLE
         /* Monitor variables with trace objects */
         CO_time_process(&CO_time);
         for(i=0; i<OD_traceEnable && i<CO_NO_TRACE; i++) {
@@ -558,10 +638,11 @@ static void* rt_thread(void* arg) {
 
 #ifdef CO_USE_APPLICATION
         /* Execute optional additional application code */
-        app_program1ms(CANopenConfiguredOK);
+        app_program1ms(!CO->nodeIdUnconfigured);
 #endif
 
     }
 
     return NULL;
 }
+#endif

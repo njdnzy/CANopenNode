@@ -20,7 +20,7 @@ INCLUDE_DIRS = \
 SOURCES = \
 	$(DRV_SRC)/CO_driver.c \
 	$(DRV_SRC)/CO_error.c \
-	$(DRV_SRC)/CO_Linux_threads.c \
+	$(DRV_SRC)/CO_epoll_interface.c \
 	$(DRV_SRC)/CO_OD_storage.c \
 	$(CANOPEN_SRC)/301/CO_SDOserver.c \
 	$(CANOPEN_SRC)/301/CO_Emergency.c \
@@ -47,8 +47,10 @@ SOURCES = \
 OBJS = $(SOURCES:%.c=%.o)
 CC ?= gcc
 OPT = -g
+#OPT = -g -DCO_SINGLE_THREAD
 CFLAGS = -Wall $(OPT) $(INCLUDE_DIRS)
 LDFLAGS = -pthread
+#LDFLAGS =
 
 
 .PHONY: all clean

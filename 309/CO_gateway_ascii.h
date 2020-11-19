@@ -24,32 +24,30 @@
  * limitations under the License.
  */
 
-
 #ifndef CO_GATEWAY_ASCII_H
 #define CO_GATEWAY_ASCII_H
 
 #include "301/CO_driver.h"
 #include "301/CO_fifo.h"
-#if (CO_CONFIG_GTW) & CO_CONFIG_GTW_ASCII_SDO
 #include "301/CO_SDOserver.h"
 #include "301/CO_SDOclient.h"
-#endif
-#if (CO_CONFIG_GTW) & CO_CONFIG_GTW_ASCII_NMT
 #include "301/CO_NMT_Heartbeat.h"
-#endif
-#if (CO_CONFIG_GTW) & CO_CONFIG_GTW_ASCII_LSS
 #include "305/CO_LSSmaster.h"
-#endif
-#if (CO_CONFIG_GTW) & CO_CONFIG_GTW_ASCII_PRINT_LEDS
 #include "303/CO_LEDs.h"
+
+/* default configuration, see CO_config.h */
+#ifndef CO_CONFIG_GTW
+#define CO_CONFIG_GTW (0)
 #endif
+
+#if ((CO_CONFIG_GTW) & CO_CONFIG_GTW_ASCII) || defined CO_DOXYGEN
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /**
- * @defgroup CO_CANopen_309_3 ASCII mapping
+ * @defgroup CO_CANopen_309_3 Gateway ASCII mapping
  * @ingroup CO_CANopen_309
  * @{
  *
@@ -521,10 +519,12 @@ void CO_GTWA_process(CO_GTWA_t *gtwa,
                      uint32_t timeDifference_us,
                      uint32_t *timerNext_us);
 
+/** @} */ /* CO_CANopen_309_3 */
 
 #ifdef __cplusplus
 }
 #endif /*__cplusplus*/
 
-/** @} */
+#endif  /* (CO_CONFIG_GTW) & CO_CONFIG_GTW_ASCII */
+
 #endif /* CO_GATEWAY_ASCII_H */

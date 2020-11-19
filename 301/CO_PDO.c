@@ -889,7 +889,7 @@ uint8_t CO_TPDOisCOS(CO_TPDO_t *TPDO){
 }
 
 /******************************************************************************/
-int16_t CO_TPDOsend(CO_TPDO_t *TPDO){
+CO_ReturnError_t CO_TPDOsend(CO_TPDO_t *TPDO){
     int16_t i;
     uint8_t* pPDOdataByte;
     uint8_t** ppODdataByte;
@@ -1026,6 +1026,8 @@ void CO_TPDO_process(
         uint32_t                timeDifference_us,
         uint32_t               *timerNext_us)
 {
+    (void)timerNext_us; /* may be unused */
+
     /* update timers */
     TPDO->inhibitTimer = (TPDO->inhibitTimer > timeDifference_us) ? (TPDO->inhibitTimer - timeDifference_us) : 0;
     TPDO->eventTimer = (TPDO->eventTimer > timeDifference_us) ? (TPDO->eventTimer - timeDifference_us) : 0;

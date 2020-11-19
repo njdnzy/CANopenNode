@@ -29,6 +29,20 @@
 
 #include <string.h>
 
+#include "301/CO_driver.h"
+
+/* default configuration, see CO_config.h */
+#ifndef CO_CONFIG_SDO_SRV
+#define CO_CONFIG_SDO_SRV (CO_CONFIG_SDO_SRV_SEGMENTED)
+#endif
+#ifndef CO_CONFIG_SDO_SRV_BUFFER_SIZE
+#define CO_CONFIG_SDO_SRV_BUFFER_SIZE 32
+#endif
+
+#define CO_CONFIG_SDO CO_CONFIG_SDO_SRV
+#define CO_CONFIG_SDO_BUFFER_SIZE CO_CONFIG_SDO_SRV_BUFFER_SIZE
+
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -70,7 +84,22 @@ extern "C" {
 
 
 /**
+ * Internal state flags indicate type of transfer
+ *
+ * These flags correspond to the upper nibble of the SDO state machine states
+ * and can be used to determine the type of state an SDO object is in.
+ */
+#define CO_SDO_ST_FLAG_DOWNLOAD     0x10U
+#define CO_SDO_ST_FLAG_UPLOAD       0x20U
+#define CO_SDO_ST_FLAG_BLOCK        0x40U
+
+/**
  * Internal states of the SDO state machine.
+ *
+ * Upper nibble of byte indicates type of state:
+ * 0x10: Download
+ * 0x20: Upload
+ * 0x40: Block Mode
  *
  * Note: CANopen has little endian byte order.
  */
@@ -82,18 +111,18 @@ typedef enum {
  * - SDO server is waiting for client request. */
 CO_SDO_ST_IDLE = 0x00U,
 /**
- * - SDO client: Node-ID of the SDO server is the same as node-ID of this node,
- *   SDO client is the same device as SDO server. Transfer data directly without
- *   communication on CAN.
- * - SDO server does not use this state. */
-CO_SDO_ST_LOCAL_TRANSFER = 0x01U,
-/**
  * - SDO client or server may send SDO abort message in case of error:
  *  - byte 0: @b 10000000 binary.
  *  - byte 1..3: Object index and subIndex.
  *  - byte 4..7: #CO_SDO_abortCode_t. */
-CO_SDO_ST_ABORT = 0x02U,
+CO_SDO_ST_ABORT = 0x01U,
 
+/**
+ * - SDO client: Node-ID of the SDO server is the same as node-ID of this node,
+ *   SDO client is the same device as SDO server. Transfer data directly without
+ *   communication on CAN.
+ * - SDO server does not use this state. */
+CO_SDO_ST_DOWNLOAD_LOCAL_TRANSFER = 0x10U,
 /**
  * - SDO client initiates SDO download:
  *  - byte 0: @b 0010nnes binary: (nn: if e=s=1, number of data bytes, that do
@@ -128,6 +157,12 @@ CO_SDO_ST_DOWNLOAD_SEGMENT_REQ = 0x13U,
  * - If c was set to 1, then communication ends here. */
 CO_SDO_ST_DOWNLOAD_SEGMENT_RSP = 0x14U,
 
+/**
+ * - SDO client: Node-ID of the SDO server is the same as node-ID of this node,
+ *   SDO client is the same device as SDO server. Transfer data directly without
+ *   communication on CAN.
+ * - SDO server does not use this state. */
+CO_SDO_ST_UPLOAD_LOCAL_TRANSFER = 0x20U,
 /**
  * - SDO client initiates SDO upload:
  *  - byte 0: @b 01000000 binary.
@@ -169,7 +204,7 @@ CO_SDO_ST_UPLOAD_SEGMENT_RSP = 0x24U,
  *  - byte 1..3: Object index and subIndex.
  *  - byte 4..7: If s=1, then size of data for block download is indicated here.
  * - SDO server is in #CO_SDO_ST_IDLE state and waits for client request. */
-CO_SDO_ST_DOWNLOAD_BLK_INITIATE_REQ = 0x31U,
+CO_SDO_ST_DOWNLOAD_BLK_INITIATE_REQ = 0x51U,
 /**
  * - SDO client waits for response.
  * - SDO server responses:
@@ -179,7 +214,7 @@ CO_SDO_ST_DOWNLOAD_BLK_INITIATE_REQ = 0x31U,
  *  - byte 4: blksize: Number of segments per block that shall be used by the
  *    client for the following block download with 0 < blksize < 128.
  *  - byte 5..7: Reserved. */
-CO_SDO_ST_DOWNLOAD_BLK_INITIATE_RSP = 0x32U,
+CO_SDO_ST_DOWNLOAD_BLK_INITIATE_RSP = 0x52U,
 /**
  * - SDO client sends 'blksize' segments of data in sequence:
  *  - byte 0: @b cnnnnnnn binary: (c=1 if no more segments to be downloaded,
@@ -187,7 +222,7 @@ CO_SDO_ST_DOWNLOAD_BLK_INITIATE_RSP = 0x32U,
  *    1..127.
  *  - byte 1..7: At most 7 bytes of segment data to be downloaded.
  * - SDO server reads sequence of 'blksize' blocks. */
-CO_SDO_ST_DOWNLOAD_BLK_SUBBLOCK_REQ = 0x33U,
+CO_SDO_ST_DOWNLOAD_BLK_SUBBLOCK_REQ = 0x53U,
 /**
  * - SDO client waits for response.
  * - SDO server responses:
@@ -202,7 +237,7 @@ CO_SDO_ST_DOWNLOAD_BLK_SUBBLOCK_REQ = 0x33U,
  *  - byte 3..7: Reserved.
  * - If c was set to 1, then communication enters SDO block download end phase.
  */
-CO_SDO_ST_DOWNLOAD_BLK_SUBBLOCK_RSP = 0x34U,
+CO_SDO_ST_DOWNLOAD_BLK_SUBBLOCK_RSP = 0x54U,
 /**
  * - SDO client sends SDO block download end:
  *  - byte 0: @b 110nnn01 binary: (nnn: number of data bytes, that do @b not
@@ -210,7 +245,7 @@ CO_SDO_ST_DOWNLOAD_BLK_SUBBLOCK_RSP = 0x34U,
  *  - byte 1..2: 16 bit CRC for the data set, if enabled by client and server.
  *  - byte 3..7: Reserved.
  * - SDO server waits for client request. */
-CO_SDO_ST_DOWNLOAD_BLK_END_REQ = 0x35U,
+CO_SDO_ST_DOWNLOAD_BLK_END_REQ = 0x55U,
 /**
  * - SDO client waits for response.
  * - SDO server responses:
@@ -218,7 +253,7 @@ CO_SDO_ST_DOWNLOAD_BLK_END_REQ = 0x35U,
  *  - byte 1..7: Reserved.
  * - Block download successfully ends here.
  */
-CO_SDO_ST_DOWNLOAD_BLK_END_RSP = 0x36U,
+CO_SDO_ST_DOWNLOAD_BLK_END_RSP = 0x56U,
 
 /**
  * - SDO client initiates SDO block upload:
@@ -231,7 +266,7 @@ CO_SDO_ST_DOWNLOAD_BLK_END_RSP = 0x36U,
  *    upload protocol #CO_SDO_ST_UPLOAD_INITIATE_RSP.
  *  - byte 6..7: Reserved.
  * - SDO server is in #CO_SDO_ST_IDLE state and waits for client request. */
-CO_SDO_ST_UPLOAD_BLK_INITIATE_REQ = 0x41U,
+CO_SDO_ST_UPLOAD_BLK_INITIATE_REQ = 0x61U,
 /**
  * - SDO client waits for response.
  * - SDO server responses:
@@ -241,13 +276,13 @@ CO_SDO_ST_UPLOAD_BLK_INITIATE_REQ = 0x41U,
  *  - byte 4..7: If s=1, then size of data for block upload is indicated here.
  * - If enabled by pst, then server may alternatively response with
  *   #CO_SDO_ST_UPLOAD_INITIATE_RSP */
-CO_SDO_ST_UPLOAD_BLK_INITIATE_RSP = 0x42U,
+CO_SDO_ST_UPLOAD_BLK_INITIATE_RSP = 0x62U,
 /**
  * - SDO client sends second initiate for SDO block upload:
  *  - byte 0: @b 10100011 binary.
  *  - byte 1..7: Reserved.
  * - SDO server waits for client request. */
-CO_SDO_ST_UPLOAD_BLK_INITIATE_REQ2 = 0x43U,
+CO_SDO_ST_UPLOAD_BLK_INITIATE_REQ2 = 0x63U,
 /**
  * - SDO client reads sequence of 'blksize' blocks.
  * - SDO server sends 'blksize' segments of data in sequence:
@@ -255,7 +290,7 @@ CO_SDO_ST_UPLOAD_BLK_INITIATE_REQ2 = 0x43U,
  *    enter SDO block upload end phase; nnnnnnn is sequence number of segment,
  *    1..127.
  *  - byte 1..7: At most 7 bytes of segment data to be uploaded. */
-CO_SDO_ST_UPLOAD_BLK_SUBBLOCK_SREQ = 0x44U,
+CO_SDO_ST_UPLOAD_BLK_SUBBLOCK_SREQ = 0x64U,
 /**
  * - SDO client responses:
  *  - byte 0: @b 10100010 binary.
@@ -269,7 +304,7 @@ CO_SDO_ST_UPLOAD_BLK_SUBBLOCK_SREQ = 0x44U,
  *  - byte 3..7: Reserved.
  * - SDO server waits for response.
  * - If c was set to 1, then communication enters SDO block upload end phase. */
-CO_SDO_ST_UPLOAD_BLK_SUBBLOCK_CRSP = 0x45U,
+CO_SDO_ST_UPLOAD_BLK_SUBBLOCK_CRSP = 0x65U,
 /**
  * - SDO client waits for server request.
  * - SDO server sends SDO block upload end:
@@ -277,7 +312,7 @@ CO_SDO_ST_UPLOAD_BLK_SUBBLOCK_CRSP = 0x45U,
  *    contain data)
  *  - byte 1..2: 16 bit CRC for the data set, if enabled by client and server.
  *  - byte 3..7: Reserved. */
-CO_SDO_ST_UPLOAD_BLK_END_SREQ = 0x46U,
+CO_SDO_ST_UPLOAD_BLK_END_SREQ = 0x66U,
 /**
  * - SDO client responses:
  *  - byte 0: @b 10100001 binary.
@@ -287,7 +322,7 @@ CO_SDO_ST_UPLOAD_BLK_END_SREQ = 0x46U,
  *   with client response. Client may then start next SDO communication
  *   immediately.
  */
-CO_SDO_ST_UPLOAD_BLK_END_CRSP = 0x47U,
+CO_SDO_ST_UPLOAD_BLK_END_CRSP = 0x67U,
 
 /* old state names, will be removed */
 CO_SDO_ST_DOWNLOAD_INITIATE = 0xA1U,
@@ -325,7 +360,7 @@ typedef enum{
     CO_SDO_AB_UNSUPPORTED_ACCESS    = 0x06010000UL, /**< 0x06010000, Unsupported access to an object */
     CO_SDO_AB_WRITEONLY             = 0x06010001UL, /**< 0x06010001, Attempt to read a write only object */
     CO_SDO_AB_READONLY              = 0x06010002UL, /**< 0x06010002, Attempt to write a read only object */
-    CO_SDO_AB_NOT_EXIST             = 0x06020000UL, /**< 0x06020000, Object does not exist */
+    CO_SDO_AB_NOT_EXIST             = 0x06020000UL, /**< 0x06020000, Object does not exist in the object dictionary */
     CO_SDO_AB_NO_MAP                = 0x06040041UL, /**< 0x06040041, Object cannot be mapped to the PDO */
     CO_SDO_AB_MAP_LEN               = 0x06040042UL, /**< 0x06040042, Number and length of object to be mapped exceeds PDO length */
     CO_SDO_AB_PRAM_INCOMPAT         = 0x06040043UL, /**< 0x06040043, General parameter incompatibility reasons */
@@ -620,6 +655,33 @@ typedef enum{
 
 
 /**
+ * Return values from SDO server or client functions.
+ */
+typedef enum {
+    /** Data buffer is full.
+     * SDO client: data must be read before next upload cycle begins. */
+    CO_SDO_RT_uploadDataBufferFull = 5,
+    /** CAN transmit buffer is full. Waiting. */
+    CO_SDO_RT_transmittBufferFull = 4,
+    /** Block download is in progress. Sending train of messages. */
+    CO_SDO_RT_blockDownldInProgress = 3,
+    /** Block upload is in progress. Receiving train of messages.
+     * SDO client: Data must not be read in this state. */
+    CO_SDO_RT_blockUploadInProgress = 2,
+    /** Waiting server or client response */
+    CO_SDO_RT_waitingResponse = 1,
+    /** Success, end of communication. SDO client: uploaded data must be read.*/
+    CO_SDO_RT_ok_communicationEnd = 0,
+    /** Error in arguments */
+    CO_SDO_RT_wrongArguments = -2,
+    /** Communication ended with client abort */
+    CO_SDO_RT_endedWithClientAbort = -9,
+    /** Communication ended with server abort */
+    CO_SDO_RT_endedWithServerAbort = -10,
+} CO_SDO_return_t;
+
+
+/**
  * Object for one entry with specific index in @ref CO_SDO_objectDictionary.
  */
 typedef struct {
@@ -799,54 +861,6 @@ typedef struct{
     /** CAN transmit buffer inside CANdev for CAN tx message */
     CO_CANtx_t         *CANtxBuff;
 }CO_SDO_t;
-
-
-/**
- * Helper function returns uint16 from byte array.
- *
- * @param data Location of source data.
- * @return Variable of type uint16_t.
- */
-static inline uint16_t CO_getUint16(const uint8_t data[]){
-    uint16_t value;
-    memcpy(&value, data, sizeof(value));
-    return value;
-}
-
-
-/**
- * Helper function returns uint32 from byte array.
- *
- * @param data Location of source data.
- * @return Variable of type uint32_t.
- */
-static inline uint32_t CO_getUint32(const uint8_t data[]){
-    uint32_t value;
-    memcpy(&value, data, sizeof(value));
-    return value;
-}
-
-
-/**
- * Helper function writes uint16 to byte array.
- *
- * @param data Location of destination data.
- * @param value Variable of type uint16_t to be written into data.
- */
-static inline void CO_setUint16(uint8_t data[], const uint16_t value){
-    memcpy(data, &value, sizeof(value));
-}
-
-
-/**
- * Helper function writes uint32 to byte array.
- *
- * @param data Location of destination data.
- * @param value Variable of type uint32_t to be written into data.
- */
-static inline void CO_setUint32(uint8_t data[], const uint32_t value){
-    memcpy(data, &value, sizeof(value));
-}
 
 
 /**

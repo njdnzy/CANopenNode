@@ -25,7 +25,14 @@
 
 #include "304/CO_SRDO.h"
 
+#if (CO_CONFIG_SRDO) & CO_CONFIG_SRDO_ENABLE
+
 #include "301/crc16-ccitt.h"
+
+/* verify configuration */
+#if !((CO_CONFIG_CRC16) & CO_CONFIG_CRC16_ENABLE)
+ #error CO_CONFIG_CRC16_ENABLE must be enabled.
+#endif
 
 #define CO_SRDO_INVALID          (0U)
 #define CO_SRDO_TX               (1U)
@@ -321,7 +328,7 @@ static uint16_t CO_SRDOcalcCrc(const CO_SRDO_t *SRDO){
     CO_memcpySwap2(&buffer[0], &com->safetyCycleTime);
     result = crc16_ccitt(&buffer[0], 2, result);
     result = crc16_ccitt(&com->safetyRelatedValidationTime, 1, result);
-    
+
     /* adjust COB-ID if the default is used
     Caution: if the node id changes and you are using the default COB-ID you have to recalculate the checksum
     This behaviour is controversial and could be changed or made optional.
@@ -494,7 +501,7 @@ CO_ReturnError_t CO_SRDOGuard_init(
     CO_OD_configure(SDO, idx_SRDOvalid, CO_ODF_SRDOvalid, (void*)SRDOGuard, 0, 0);
     CO_OD_configure(SDO, idx_SRDOcrc, CO_ODF_SRDOcrc, (void*)SRDOGuard, 0, 0);
 
-    return CO_ERROR_NO; 
+    return CO_ERROR_NO;
 }
 
 uint8_t CO_SRDOGuard_process(
@@ -613,13 +620,15 @@ CO_ReturnError_t CO_SRDO_requestSend(
     SRDO->timer = 0;
     return CO_ERROR_NO;
 }
-        
+
 void CO_SRDO_process(
         CO_SRDO_t              *SRDO,
-        uint8_t                 commands,       
+        uint8_t                 commands,
         uint32_t                timeDifference_us,
         uint32_t               *timerNext_us)
 {
+    (void)timerNext_us; /* may be unused */
+
     if(commands & (1<<1)){
         uint16_t crcValue = CO_SRDOcalcCrc(SRDO);
         if (*SRDO->checksum != crcValue)
@@ -701,14 +710,12 @@ void CO_SRDO_process(
                             break;
                         }
                     }
-#else
-                    (void)timerNext_us;
 #endif
                     if(data_ok){
                         /* Copy data from Object dictionary. */
                         for(i = 0; i<SRDO->dataLength; i++){
                             pSRDOdataByte_normal[i] = *(ppODdataByte_normal[i]);
-                            pSRDOdataByte_inverted[i] = *(ppODdataByte_inverted[i]);                   
+                            pSRDOdataByte_inverted[i] = *(ppODdataByte_inverted[i]);
                         }
 
                         CO_CANsend(SRDO->CANdevTx, SRDO->CANtxBuff[0]);
@@ -744,7 +751,7 @@ void CO_SRDO_process(
                     uint8_t** ppODdataByte_normal;
                     uint8_t** ppODdataByte_inverted;
                     bool_t data_ok = true;
-                    
+
                     pSRDOdataByte_normal = &SRDO->CANrxData[0][0];
                     pSRDOdataByte_inverted = &SRDO->CANrxData[1][0];
                     for(i = 0; i<SRDO->dataLength; i++){
@@ -836,3 +843,5 @@ void CO_SRDO_process(
         CO_FLAG_CLEAR(SRDO->CANrxNew[1]);
     }
 }
+
+#endif /* (CO_CONFIG_SRDO) & CO_CONFIG_SRDO_ENABLE */
